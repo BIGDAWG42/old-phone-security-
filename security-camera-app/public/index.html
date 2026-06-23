@@ -5,47 +5,113 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Security Camera Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #0f0f0f; color: white; }
-        h1 { text-align: center; }
-        .camera-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; }
-        .camera { background: #1a1a1a; border-radius: 8px; overflow: hidden; position: relative; }
-        video { width: 100%; display: block; background: black; }
-        .info { padding: 10px; background: rgba(0,0,0,0.7); display: flex; justify-content: space-between; }
-        button { padding: 8px 16px; margin: 5px; background: #0066ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .alert { color: red; font-weight: bold; animation: blink 1s infinite; }
-        @keyframes blink { 50% { opacity: 0.4; } }
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 0; 
+            padding: 20px; 
+            background: #0f0f0f; 
+            color: white; 
+        }
+        h1 { text-align: center; margin-bottom: 20px; }
+        .camera-grid { 
+            display: grid; 
+            grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); 
+            gap: 20px; 
+        }
+        .camera { 
+            background: #1a1a1a; 
+            border-radius: 8px; 
+            overflow: hidden; 
+            position: relative; 
+        }
+        video { 
+            width: 100%; 
+            display: block; 
+            background: black; 
+        }
+        .info { 
+            padding: 12px; 
+            background: rgba(0,0,0,0.8); 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+        }
+        button { 
+            padding: 8px 16px; 
+            margin: 4px; 
+            background: #0066ff; 
+            color: white; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+        }
+        button:hover { background: #3388ff; }
+        .alert { 
+            color: #ff4444; 
+            font-weight: bold; 
+            animation: blink 1s infinite; 
+        }
+        @keyframes blink { 50% { opacity: 0.3; } }
+        #status { color: #00ff88; }
     </style>
 </head>
 <body>
     <h1>📹 Local Security Camera System</h1>
+    <p id="connection-status" style="text-align:center; color:#aaa;">Connecting to server...</p>
+    
     <div id="cameras" class="camera-grid"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
+        let socket;
         const cameras = {};
 
-        socket.on('connect', () => {
-            socket.emit('join-room', 'main-room');
-            console.log('Connected to server');
-        });
+        function connectSocket() {
+            socket = io({
+                path: '/socket.io',
+                reconnection: true,
+                reconnectionAttempts: 10,
+                reconnectionDelay: 1000,
+                transports: ['websocket', 'polling']
+            });
 
-        socket.on('alert', (data) => {
-            const el = document.getElementById(`status-${data.cameraId}`);
-            if (el) {
-                el.innerHTML = `🚨 MOTION DETECTED - ${data.timestamp}`;
-                setTimeout(() => { el.textContent = 'Live'; }, 8000);
-            }
-        });
+            socket.on('connect', () => {
+                console.log('✅ Connected to server');
+                document.getElementById('connection-status').innerHTML = 
+                    '✅ Connected • <span style="color:#0f0">Ready</span>';
+                socket.emit('join-room', 'main-room');
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('Connection error:', err);
+                document.getElementById('connection-status').innerHTML = 
+                    '⚠️ Connection error - Refresh page';
+            });
+
+            socket.on('alert', (data) => {
+                const el = document.getElementById(`status-${data.cameraId}`);
+                if (el) {
+                    el.innerHTML = `🚨 MOTION DETECTED - ${data.timestamp}`;
+                    setTimeout(() => {
+                        if (el) el.textContent = 'Live';
+                    }, 8000);
+                }
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('connection-status').textContent = 'Disconnected - Trying to reconnect...';
+            });
+        }
 
         function addCamera(id) {
             if (cameras[id]) return;
+            
             const div = document.createElement('div');
             div.className = 'camera';
             div.innerHTML = `
                 <video id="video-${id}" autoplay playsinline></video>
                 <div class="info">
-                    <span id="status-${id}">Waiting for stream...</span>
+                    <span id="status-${id}">Waiting for camera stream...</span>
                     <div>
                         <button onclick="snapshot('${id}')">📸 Snapshot</button>
                         <button onclick="toggleRecord('${id}')">⏺ Record</button>
@@ -58,23 +124,29 @@
 
         function snapshot(id) {
             const video = document.getElementById(`video-${id}`);
-            if (!video) return;
+            if (!video || !video.videoWidth) return alert("No video feed available");
+            
             const canvas = document.createElement('canvas');
-            canvas.width = video.videoWidth || 1280;
-            canvas.height = video.videoHeight || 720;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
             canvas.getContext('2d').drawImage(video, 0, 0);
+            
             const a = document.createElement('a');
             a.href = canvas.toDataURL('image/png');
-            a.download = `camera-${id}-${Date.now()}.png`;
+            a.download = `snapshot-${id}-${Date.now()}.png`;
             a.click();
         }
 
         function toggleRecord(id) {
-            alert('Recording feature coming soon (WebRTC stream)');
+            alert("Recording (MediaRecorder) coming in next update");
         }
 
-        // Add demo camera
-        setTimeout(() => addCamera('Camera-Phone1'), 800);
+        // Initialize
+        window.onload = () => {
+            connectSocket();
+            // Add demo camera for now
+            setTimeout(() => addCamera('Phone-Camera-1'), 1000);
+        };
     </script>
 </body>
 </html>
