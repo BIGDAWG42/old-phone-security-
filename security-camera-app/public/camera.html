@@ -2,33 +2,74 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Security Camera Client</title>
     <style>
-        body { margin:0; padding:0; background:#000; color:white; font-family:Arial; display:flex; flex-direction:column; height:100vh; }
-        video { width:100%; flex:1; background:black; }
-        .controls { padding:15px; text-align:center; background:#111; }
-        button { padding:12px 24px; margin:5px; font-size:16px; background:#0066ff; color:white; border:none; border-radius:6px; }
+        body { 
+            margin:0; padding:0; background:#000; color:white; 
+            font-family:Arial, sans-serif; 
+            display:flex; flex-direction:column; height:100vh; 
+        }
+        video { 
+            width:100%; flex:1; background:black; object-fit:cover; 
+        }
+        .controls { 
+            padding:15px; text-align:center; background:#111; 
+        }
+        button { 
+            padding:12px 24px; margin:5px; font-size:16px; 
+            background:#0066ff; color:white; border:none; border-radius:6px; 
+        }
+        #status { margin:10px 0; font-size:15px; }
+        .error { color: #ff6666; }
     </style>
 </head>
 <body>
     <video id="preview" autoplay playsinline muted></video>
     
     <div class="controls">
-        <button onclick="startCamera()">Start Camera</button>
-        <button onclick="stopCamera()">Stop Camera</button>
-        <p id="status">Ready - Open this on same Wi-Fi</p>
+        <button onclick="startCamera()">▶️ Start Camera</button>
+        <button onclick="stopCamera()">⏹ Stop Camera</button>
+        <p id="status">Connecting to server...</p>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        const socket = io();
+        let socket;
         let stream = null;
         const room = 'main-room';
+        let cameraId = 'Phone-Camera-1';
 
-        socket.emit('join-room', room);
+        function connectSocket() {
+            socket = io({
+                path: '/socket.io',
+                reconnection: true,
+                reconnectionAttempts: 15,
+                reconnectionDelay: 800,
+                transports: ['websocket', 'polling']
+            });
+
+            socket.on('connect', () => {
+                console.log('✅ Socket connected');
+                document.getElementById('status').innerHTML = 
+                    '✅ Connected to Server • Ready to start camera';
+                socket.emit('join-room', room);
+            });
+
+            socket.on('connect_error', (err) => {
+                console.error('Socket error:', err);
+                document.getElementById('status').innerHTML = 
+                    '⚠️ Connection failed. Check internet / URL';
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('status').innerHTML = 
+                    'Disconnected - Reconnecting...';
+            });
+        }
 
         async function startCamera() {
+            const statusEl = document.getElementById('status');
             try {
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { 
@@ -38,19 +79,24 @@
                     },
                     audio: false
                 });
+                
                 document.getElementById('preview').srcObject = stream;
-                document.getElementById('status').textContent = '📹 Live • Motion Detection Active';
+                statusEl.innerHTML = '📹 Camera Live • Motion Detection Active';
+                
                 startMotionDetection();
             } catch (e) {
-                document.getElementById('status').textContent = 'Camera permission denied';
+                console.error(e);
+                statusEl.innerHTML = '❌ Camera access denied or not available';
             }
         }
 
         function stopCamera() {
             if (stream) {
                 stream.getTracks().forEach(track => track.stop());
+                stream = null;
             }
-            document.getElementById('status').textContent = 'Stopped';
+            document.getElementById('preview').srcObject = null;
+            document.getElementById('status').textContent = 'Camera stopped';
         }
 
         function startMotionDetection() {
@@ -60,7 +106,8 @@
             let previousFrame = null;
 
             setInterval(() => {
-                if (!video.videoWidth) return;
+                if (!video.videoWidth || !socket?.connected) return;
+                
                 canvas.width = video.videoWidth / 5;
                 canvas.height = video.videoHeight / 5;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -72,13 +119,21 @@
                     for (let i = 0; i < currentFrame.length; i += 4) {
                         if (Math.abs(currentFrame[i] - previousFrame[i]) > 30) movement++;
                     }
-                    if (movement > 60) {
-                        socket.emit('motion-detected', { cameraId: 'Camera-Phone1', room: room });
+                    if (movement > 70) {
+                        socket.emit('motion-detected', { 
+                            cameraId: cameraId, 
+                            room: room 
+                        });
                     }
                 }
                 previousFrame = new Uint8ClampedArray(currentFrame);
-            }, 500);
+            }, 600);
         }
+
+        // Initialize
+        window.onload = () => {
+            connectSocket();
+        };
     </script>
 </body>
 </html>
