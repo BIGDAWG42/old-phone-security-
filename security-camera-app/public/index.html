@@ -9,10 +9,10 @@
         h1 { text-align: center; }
         .camera-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 20px; }
         .camera { background: #1a1a1a; border-radius: 8px; overflow: hidden; position: relative; }
-        video { width: 100%; display: block; background: #000; min-height: 360px; }
+        video { width: 100%; display: block; background: #000; min-height: 400px; }
         .info { padding: 12px; background: rgba(0,0,0,0.8); display: flex; justify-content: space-between; align-items: center; }
         button { padding: 8px 16px; background: #0066ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
-        .log { font-size: 12px; color: #aaa; margin-top: 10px; }
+        .log { font-size: 13px; color: #aaa; margin-top: 10px; max-height: 150px; overflow-y: auto; }
     </style>
 </head>
 <body>
@@ -27,9 +27,10 @@
         let peerConnections = {};
 
         function log(msg) {
-            const logEl = document.getElementById('debug-log');
-            logEl.innerHTML += `<br>> ${new Date().toLocaleTimeString()}: ${msg}`;
+            const el = document.getElementById('debug-log');
+            el.innerHTML += `<br>[${new Date().toLocaleTimeString()}] ${msg}`;
             console.log(msg);
+            el.scrollTop = el.scrollHeight;
         }
 
         function connectSocket() {
@@ -38,11 +39,11 @@
             socket.on('connect', () => {
                 document.getElementById('connection-status').innerHTML = '✅ Connected';
                 socket.emit('join-room', 'main-room');
-                log('Socket connected');
+                log('Socket connected successfully');
             });
 
             socket.on('offer', async (data) => {
-                log(`Received offer from ${data.cameraId}`);
+                log(`📥 Received offer from ${data.cameraId}`);
                 await createPeerConnection(data.cameraId, data.offer);
             });
 
@@ -57,8 +58,8 @@
             socket.on('alert', (data) => {
                 const el = document.getElementById(`status-${data.cameraId}`);
                 if (el) {
-                    el.innerHTML = `🚨 MOTION - ${data.timestamp}`;
-                    setTimeout(() => { if(el) el.textContent = 'Live'; }, 8000);
+                    el.innerHTML = `🚨 MOTION DETECTED - ${data.timestamp}`;
+                    setTimeout(() => { if(el) el.textContent = 'Live'; }, 7000);
                 }
             });
         }
@@ -74,11 +75,12 @@
             addCameraUI(cameraId);
 
             pc.ontrack = (event) => {
-                log('✅ Received video track!');
+                log('✅ VIDEO TRACK RECEIVED!');
                 const video = document.getElementById(`video-${cameraId}`);
                 if (video) {
                     video.srcObject = event.streams[0];
-                    video.play().catch(e => log('Play error: ' + e.message));
+                    video.muted = false;
+                    video.play().then(() => log('Video playing')).catch(e => log('Play failed: ' + e.message));
                 }
             };
 
@@ -90,13 +92,13 @@
 
             try {
                 await pc.setRemoteDescription(new RTCSessionDescription(offer));
-                log('Set remote description');
+                log('Remote description set');
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
-                log('Created answer');
+                log('Answer created and sent');
                 socket.emit('answer', { room: 'main-room', cameraId, answer: pc.localDescription });
             } catch (err) {
-                log('Error: ' + err.message);
+                log('❌ Error in peer connection: ' + err.message);
             }
         }
 
@@ -106,7 +108,7 @@
             div.innerHTML = `
                 <video id="video-${id}" autoplay playsinline></video>
                 <div class="info">
-                    <span id="status-${id}">Live</span>
+                    <span id="status-${id}">Waiting for video...</span>
                     <button onclick="snapshot('${id}')">📸 Snapshot</button>
                 </div>
             `;
@@ -115,7 +117,7 @@
 
         function snapshot(id) {
             const video = document.getElementById(`video-${id}`);
-            if (!video || !video.srcObject) return alert("No video feed yet");
+            if (!video || !video.srcObject) return alert("No video yet");
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth || 1280;
             canvas.height = video.videoHeight || 720;
