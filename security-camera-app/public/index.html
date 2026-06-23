@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Camera Dashboard</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #0f0f0f; color: white; }
+        h1 { text-align: center; }
+        .camera-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 20px; }
+        .camera { background: #1a1a1a; border-radius: 8px; overflow: hidden; position: relative; }
+        video { width: 100%; display: block; background: black; }
+        .info { padding: 10px; background: rgba(0,0,0,0.7); display: flex; justify-content: space-between; }
+        button { padding: 8px 16px; margin: 5px; background: #0066ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .alert { color: red; font-weight: bold; animation: blink 1s infinite; }
+        @keyframes blink { 50% { opacity: 0.4; } }
+    </style>
+</head>
+<body>
+    <h1>📹 Local Security Camera System</h1>
+    <div id="cameras" class="camera-grid"></div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        const cameras = {};
+
+        socket.on('connect', () => {
+            socket.emit('join-room', 'main-room');
+            console.log('Connected to server');
+        });
+
+        socket.on('alert', (data) => {
+            const el = document.getElementById(`status-${data.cameraId}`);
+            if (el) {
+                el.innerHTML = `🚨 MOTION DETECTED - ${data.timestamp}`;
+                setTimeout(() => { el.textContent = 'Live'; }, 8000);
+            }
+        });
+
+        function addCamera(id) {
+            if (cameras[id]) return;
+            const div = document.createElement('div');
+            div.className = 'camera';
+            div.innerHTML = `
+                <video id="video-${id}" autoplay playsinline></video>
+                <div class="info">
+                    <span id="status-${id}">Waiting for stream...</span>
+                    <div>
+                        <button onclick="snapshot('${id}')">📸 Snapshot</button>
+                        <button onclick="toggleRecord('${id}')">⏺ Record</button>
+                    </div>
+                </div>
+            `;
+            document.getElementById('cameras').appendChild(div);
+            cameras[id] = { recording: false };
+        }
+
+        function snapshot(id) {
+            const video = document.getElementById(`video-${id}`);
+            if (!video) return;
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth || 1280;
+            canvas.height = video.videoHeight || 720;
+            canvas.getContext('2d').drawImage(video, 0, 0);
+            const a = document.createElement('a');
+            a.href = canvas.toDataURL('image/png');
+            a.download = `camera-${id}-${Date.now()}.png`;
+            a.click();
+        }
+
+        function toggleRecord(id) {
+            alert('Recording feature coming soon (WebRTC stream)');
+        }
+
+        // Add demo camera
+        setTimeout(() => addCamera('Camera-Phone1'), 800);
+    </script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+{
+  "name": "security-camera-app",
+  "version": "1.0.0",
+  "description": "Local Wi-Fi Security Camera System",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "bonjour-service": "^1.2.1"
+  }
+}

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security Camera Client</title>
+    <style>
+        body { margin:0; padding:0; background:#000; color:white; font-family:Arial; display:flex; flex-direction:column; height:100vh; }
+        video { width:100%; flex:1; background:black; }
+        .controls { padding:15px; text-align:center; background:#111; }
+        button { padding:12px 24px; margin:5px; font-size:16px; background:#0066ff; color:white; border:none; border-radius:6px; }
+    </style>
+</head>
+<body>
+    <video id="preview" autoplay playsinline muted></video>
+    
+    <div class="controls">
+        <button onclick="startCamera()">Start Camera</button>
+        <button onclick="stopCamera()">Stop Camera</button>
+        <p id="status">Ready - Open this on same Wi-Fi</p>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let stream = null;
+        const room = 'main-room';
+
+        socket.emit('join-room', room);
+
+        async function startCamera() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { 
+                        facingMode: "environment",
+                        width: { ideal: 1280 },
+                        height: { ideal: 720 }
+                    },
+                    audio: false
+                });
+                document.getElementById('preview').srcObject = stream;
+                document.getElementById('status').textContent = '📹 Live • Motion Detection Active';
+                startMotionDetection();
+            } catch (e) {
+                document.getElementById('status').textContent = 'Camera permission denied';
+            }
+        }
+
+        function stopCamera() {
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+            }
+            document.getElementById('status').textContent = 'Stopped';
+        }
+
+        function startMotionDetection() {
+            const video = document.getElementById('preview');
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            let previousFrame = null;
+
+            setInterval(() => {
+                if (!video.videoWidth) return;
+                canvas.width = video.videoWidth / 5;
+                canvas.height = video.videoHeight / 5;
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                
+                const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+                if (previousFrame) {
+                    let movement = 0;
+                    for (let i = 0; i < currentFrame.length; i += 4) {
+                        if (Math.abs(currentFrame[i] - previousFrame[i]) > 30) movement++;
+                    }
+                    if (movement > 60) {
+                        socket.emit('motion-detected', { cameraId: 'Camera-Phone1', room: room });
+                    }
+                }
+                previousFrame = new Uint8ClampedArray(currentFrame);
+            }, 500);
+        }
+    </script>
+</body>
+</html>
