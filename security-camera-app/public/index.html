@@ -9,20 +9,28 @@
         h1 { text-align: center; }
         .camera-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 20px; }
         .camera { background: #1a1a1a; border-radius: 8px; overflow: hidden; position: relative; }
-        video { width: 100%; display: block; background: #000; min-height: 320px; }
+        video { width: 100%; display: block; background: #000; min-height: 360px; }
         .info { padding: 12px; background: rgba(0,0,0,0.8); display: flex; justify-content: space-between; align-items: center; }
         button { padding: 8px 16px; background: #0066ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .log { font-size: 12px; color: #aaa; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h1>📹 Security Camera Dashboard</h1>
     <p id="connection-status" style="text-align:center; color:#0f0;">Connecting...</p>
     <div id="cameras" class="camera-grid"></div>
+    <div class="log" id="debug-log"></div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
         let socket;
         let peerConnections = {};
+
+        function log(msg) {
+            const logEl = document.getElementById('debug-log');
+            logEl.innerHTML += `<br>> ${new Date().toLocaleTimeString()}: ${msg}`;
+            console.log(msg);
+        }
 
         function connectSocket() {
             socket = io({ path: '/socket.io' });
@@ -30,40 +38,66 @@
             socket.on('connect', () => {
                 document.getElementById('connection-status').innerHTML = '✅ Connected';
                 socket.emit('join-room', 'main-room');
+                log('Socket connected');
             });
 
-            socket.on('offer', (data) => createPeerConnection(data.cameraId, data.offer));
-            socket.on('ice-candidate', (data) => {
-                const pc = peerConnections[data.cameraId];
-                if (pc) pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+            socket.on('offer', async (data) => {
+                log(`Received offer from ${data.cameraId}`);
+                await createPeerConnection(data.cameraId, data.offer);
             });
+
+            socket.on('ice-candidate', async (data) => {
+                const pc = peerConnections[data.cameraId];
+                if (pc && data.candidate) {
+                    await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+                    log('Added ICE candidate');
+                }
+            });
+
             socket.on('alert', (data) => {
                 const el = document.getElementById(`status-${data.cameraId}`);
                 if (el) {
                     el.innerHTML = `🚨 MOTION - ${data.timestamp}`;
-                    setTimeout(() => el.textContent = 'Live', 8000);
+                    setTimeout(() => { if(el) el.textContent = 'Live'; }, 8000);
                 }
             });
         }
 
         async function createPeerConnection(cameraId, offer) {
-            const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+            if (peerConnections[cameraId]) return;
+
+            const pc = new RTCPeerConnection({
+                iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+            });
             peerConnections[cameraId] = pc;
 
             addCameraUI(cameraId);
 
-            pc.ontrack = (e) => {
-                document.getElementById(`video-${cameraId}`).srcObject = e.streams[0];
+            pc.ontrack = (event) => {
+                log('✅ Received video track!');
+                const video = document.getElementById(`video-${cameraId}`);
+                if (video) {
+                    video.srcObject = event.streams[0];
+                    video.play().catch(e => log('Play error: ' + e.message));
+                }
             };
 
-            pc.onicecandidate = (e) => {
-                if (e.candidate) socket.emit('ice-candidate', { room: 'main-room', cameraId, candidate: e.candidate });
+            pc.onicecandidate = (event) => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', { room: 'main-room', cameraId, candidate: event.candidate });
+                }
             };
 
-            await pc.setRemoteDescription(offer);
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            socket.emit('answer', { room: 'main-room', cameraId, answer: pc.localDescription });
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                log('Set remote description');
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                log('Created answer');
+                socket.emit('answer', { room: 'main-room', cameraId, answer: pc.localDescription });
+            } catch (err) {
+                log('Error: ' + err.message);
+            }
         }
 
         function addCameraUI(id) {
@@ -73,7 +107,7 @@
                 <video id="video-${id}" autoplay playsinline></video>
                 <div class="info">
                     <span id="status-${id}">Live</span>
-                    <button onclick="snapshot('${id}')">📸</button>
+                    <button onclick="snapshot('${id}')">📸 Snapshot</button>
                 </div>
             `;
             document.getElementById('cameras').appendChild(div);
@@ -81,7 +115,7 @@
 
         function snapshot(id) {
             const video = document.getElementById(`video-${id}`);
-            if (!video.srcObject) return;
+            if (!video || !video.srcObject) return alert("No video feed yet");
             const canvas = document.createElement('canvas');
             canvas.width = video.videoWidth || 1280;
             canvas.height = video.videoHeight || 720;
