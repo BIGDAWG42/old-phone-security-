@@ -2,14 +2,13 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>Security Camera Client</title>
     <style>
         body { margin:0; padding:0; background:#000; color:white; display:flex; flex-direction:column; height:100vh; font-family:Arial; }
         video { width:100%; flex:1; background:black; }
         .controls { padding:15px; text-align:center; background:#111; }
         button { padding:12px 24px; margin:5px; font-size:16px; background:#0066ff; color:white; border:none; border-radius:6px; }
-        #status { margin:10px 0; }
     </style>
 </head>
 <body>
@@ -18,7 +17,7 @@
     <div class="controls">
         <button onclick="startStreaming()">▶️ Start Streaming</button>
         <button onclick="stopCamera()">⏹ Stop</button>
-        <p id="status">Connecting...</p>
+        <p id="status">Connecting to server...</p>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
@@ -28,60 +27,43 @@
         const cameraId = 'Phone-Camera-1';
 
         function connectSocket() {
-            socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] });
-
+            socket = io({ path: '/socket.io' });
             socket.on('connect', () => {
-                document.getElementById('status').innerHTML = '✅ Connected • Press Start Streaming';
+                document.getElementById('status').innerHTML = '✅ Connected • Tap Start Streaming';
                 socket.emit('join-room', room);
             });
-
-            socket.on('answer', async (data) => {
-                if (peerConnection) {
-                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
-                }
+            socket.on('answer', (data) => {
+                if (peerConnection) peerConnection.setRemoteDescription(data.answer);
             });
-
-            socket.on('ice-candidate', async (data) => {
-                if (peerConnection && data.candidate) {
-                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
-                }
+            socket.on('ice-candidate', (data) => {
+                if (peerConnection) peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
             });
         }
 
         async function startStreaming() {
-            const status = document.getElementById('status');
             try {
                 localStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: "environment", width: {ideal:1280}, height:{ideal:720} },
+                    video: { facingMode: "environment" },
                     audio: false
                 });
                 document.getElementById('preview').srcObject = localStream;
 
-                peerConnection = new RTCPeerConnection({
-                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-                });
+                peerConnection = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
 
-                localStream.getTracks().forEach(track => {
-                    peerConnection.addTrack(track, localStream);
-                });
+                localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
 
                 peerConnection.onicecandidate = (e) => {
-                    if (e.candidate) socket.emit('ice-candidate', { room, candidate: e.candidate });
+                    if (e.candidate) socket.emit('ice-candidate', { room, cameraId, candidate: e.candidate });
                 };
 
                 const offer = await peerConnection.createOffer();
                 await peerConnection.setLocalDescription(offer);
+                socket.emit('offer', { room, cameraId, offer: peerConnection.localDescription });
 
-                socket.emit('offer', { 
-                    room: room, 
-                    offer: peerConnection.localDescription,
-                    cameraId: cameraId 
-                });
-
-                status.innerHTML = '📹 Streaming Live to PC';
+                document.getElementById('status').innerHTML = '📹 Streaming Live';
                 startMotionDetection();
             } catch (err) {
-                status.innerHTML = '❌ Error: ' + err.message;
+                document.getElementById('status').innerHTML = '❌ Error: ' + err.message;
             }
         }
 
@@ -92,14 +74,13 @@
         }
 
         function startMotionDetection() {
-            // Same motion detection as before
             const video = document.getElementById('preview');
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
             let prev = null;
 
             setInterval(() => {
-                if (!video.videoWidth || !socket?.connected) return;
+                if (!video.videoWidth) return;
                 canvas.width = video.videoWidth / 5;
                 canvas.height = video.videoHeight / 5;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
@@ -110,7 +91,7 @@
                     for (let i = 0; i < data.length; i += 4) {
                         if (Math.abs(data[i] - prev[i]) > 30) diff++;
                     }
-                    if (diff > 70) {
+                    if (diff > 70 && socket) {
                         socket.emit('motion-detected', { cameraId, room });
                     }
                 }
