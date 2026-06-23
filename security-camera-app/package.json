@@ -1,7 +1,6 @@
 {
-  "name": "security-camera-app",
+  "name": "old-phone-security",
   "version": "1.0.0",
-  "description": "Local Wi-Fi Security Camera System",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
