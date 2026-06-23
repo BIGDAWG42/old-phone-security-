@@ -5,135 +5,120 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Security Camera Client</title>
     <style>
-        body { 
-            margin:0; padding:0; background:#000; color:white; 
-            font-family:Arial, sans-serif; 
-            display:flex; flex-direction:column; height:100vh; 
-        }
-        video { 
-            width:100%; flex:1; background:black; object-fit:cover; 
-        }
-        .controls { 
-            padding:15px; text-align:center; background:#111; 
-        }
-        button { 
-            padding:12px 24px; margin:5px; font-size:16px; 
-            background:#0066ff; color:white; border:none; border-radius:6px; 
-        }
-        #status { margin:10px 0; font-size:15px; }
-        .error { color: #ff6666; }
+        body { margin:0; padding:0; background:#000; color:white; display:flex; flex-direction:column; height:100vh; font-family:Arial; }
+        video { width:100%; flex:1; background:black; }
+        .controls { padding:15px; text-align:center; background:#111; }
+        button { padding:12px 24px; margin:5px; font-size:16px; background:#0066ff; color:white; border:none; border-radius:6px; }
+        #status { margin:10px 0; }
     </style>
 </head>
 <body>
     <video id="preview" autoplay playsinline muted></video>
     
     <div class="controls">
-        <button onclick="startCamera()">▶️ Start Camera</button>
-        <button onclick="stopCamera()">⏹ Stop Camera</button>
-        <p id="status">Connecting to server...</p>
+        <button onclick="startStreaming()">▶️ Start Streaming</button>
+        <button onclick="stopCamera()">⏹ Stop</button>
+        <p id="status">Connecting...</p>
     </div>
 
     <script src="/socket.io/socket.io.js"></script>
     <script>
-        let socket;
-        let stream = null;
+        let socket, localStream, peerConnection;
         const room = 'main-room';
-        let cameraId = 'Phone-Camera-1';
+        const cameraId = 'Phone-Camera-1';
 
         function connectSocket() {
-            socket = io({
-                path: '/socket.io',
-                reconnection: true,
-                reconnectionAttempts: 15,
-                reconnectionDelay: 800,
-                transports: ['websocket', 'polling']
-            });
+            socket = io({ path: '/socket.io', transports: ['websocket', 'polling'] });
 
             socket.on('connect', () => {
-                console.log('✅ Socket connected');
-                document.getElementById('status').innerHTML = 
-                    '✅ Connected to Server • Ready to start camera';
+                document.getElementById('status').innerHTML = '✅ Connected • Press Start Streaming';
                 socket.emit('join-room', room);
             });
 
-            socket.on('connect_error', (err) => {
-                console.error('Socket error:', err);
-                document.getElementById('status').innerHTML = 
-                    '⚠️ Connection failed. Check internet / URL';
+            socket.on('answer', async (data) => {
+                if (peerConnection) {
+                    await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+                }
             });
 
-            socket.on('disconnect', () => {
-                document.getElementById('status').innerHTML = 
-                    'Disconnected - Reconnecting...';
+            socket.on('ice-candidate', async (data) => {
+                if (peerConnection && data.candidate) {
+                    await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+                }
             });
         }
 
-        async function startCamera() {
-            const statusEl = document.getElementById('status');
+        async function startStreaming() {
+            const status = document.getElementById('status');
             try {
-                stream = await navigator.mediaDevices.getUserMedia({
-                    video: { 
-                        facingMode: "environment",
-                        width: { ideal: 1280 },
-                        height: { ideal: 720 }
-                    },
+                localStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: "environment", width: {ideal:1280}, height:{ideal:720} },
                     audio: false
                 });
-                
-                document.getElementById('preview').srcObject = stream;
-                statusEl.innerHTML = '📹 Camera Live • Motion Detection Active';
-                
+                document.getElementById('preview').srcObject = localStream;
+
+                peerConnection = new RTCPeerConnection({
+                    iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                });
+
+                localStream.getTracks().forEach(track => {
+                    peerConnection.addTrack(track, localStream);
+                });
+
+                peerConnection.onicecandidate = (e) => {
+                    if (e.candidate) socket.emit('ice-candidate', { room, candidate: e.candidate });
+                };
+
+                const offer = await peerConnection.createOffer();
+                await peerConnection.setLocalDescription(offer);
+
+                socket.emit('offer', { 
+                    room: room, 
+                    offer: peerConnection.localDescription,
+                    cameraId: cameraId 
+                });
+
+                status.innerHTML = '📹 Streaming Live to PC';
                 startMotionDetection();
-            } catch (e) {
-                console.error(e);
-                statusEl.innerHTML = '❌ Camera access denied or not available';
+            } catch (err) {
+                status.innerHTML = '❌ Error: ' + err.message;
             }
         }
 
         function stopCamera() {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-                stream = null;
-            }
-            document.getElementById('preview').srcObject = null;
-            document.getElementById('status').textContent = 'Camera stopped';
+            if (localStream) localStream.getTracks().forEach(t => t.stop());
+            if (peerConnection) peerConnection.close();
+            document.getElementById('status').textContent = 'Stopped';
         }
 
         function startMotionDetection() {
+            // Same motion detection as before
             const video = document.getElementById('preview');
             const canvas = document.createElement('canvas');
             const ctx = canvas.getContext('2d');
-            let previousFrame = null;
+            let prev = null;
 
             setInterval(() => {
                 if (!video.videoWidth || !socket?.connected) return;
-                
                 canvas.width = video.videoWidth / 5;
                 canvas.height = video.videoHeight / 5;
                 ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                
-                const currentFrame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                const data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
 
-                if (previousFrame) {
-                    let movement = 0;
-                    for (let i = 0; i < currentFrame.length; i += 4) {
-                        if (Math.abs(currentFrame[i] - previousFrame[i]) > 30) movement++;
+                if (prev) {
+                    let diff = 0;
+                    for (let i = 0; i < data.length; i += 4) {
+                        if (Math.abs(data[i] - prev[i]) > 30) diff++;
                     }
-                    if (movement > 70) {
-                        socket.emit('motion-detected', { 
-                            cameraId: cameraId, 
-                            room: room 
-                        });
+                    if (diff > 70) {
+                        socket.emit('motion-detected', { cameraId, room });
                     }
                 }
-                previousFrame = new Uint8ClampedArray(currentFrame);
+                prev = new Uint8ClampedArray(data);
             }, 600);
         }
 
-        // Initialize
-        window.onload = () => {
-            connectSocket();
-        };
+        window.onload = connectSocket;
     </script>
 </body>
 </html>
